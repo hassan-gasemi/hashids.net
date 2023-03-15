@@ -384,6 +384,103 @@ namespace HashidsNet
             return hashLength;
         }
 
+        private int GenerateHashFrom(ulong number, ref Span<char> result)
+        {
+            if (number < 0)
+                return 0;
+
+            var numberHashInt = number % 100;
+
+            var alphabet = _alphabet.Length < MAX_STACKALLOC_SIZE ? stackalloc char[_alphabet.Length] : new char[_alphabet.Length];
+            _alphabet.CopyTo(alphabet);
+
+            var lottery = alphabet[(int)(numberHashInt % (ulong)_alphabet.Length)];
+            result[0] = lottery;
+
+            var shuffleBuffer = _alphabet.Length < MAX_STACKALLOC_SIZE ? stackalloc char[_alphabet.Length] : new char[_alphabet.Length];
+            shuffleBuffer[0] = lottery;
+            _salt.AsSpan().Slice(0, Math.Min(_salt.Length, _alphabet.Length - 1)).CopyTo(shuffleBuffer.Slice(1));
+
+            var startIndex = 1 + _salt.Length;
+            var length = _alphabet.Length - startIndex;
+
+            Span<char> hashBuffer = stackalloc char[_minBufferSize];
+
+            if (length > 0)
+                alphabet.Slice(0, length).CopyTo(shuffleBuffer.Slice(startIndex));
+
+            ConsistentShuffle(alphabet, shuffleBuffer);
+            var hashLength = BuildReversedHash(number, alphabet, hashBuffer);
+
+            // Reverse hashBuffer in a loop and insert into result
+            for (var i = 0; i < hashLength; i++)
+                result[i + 1] = hashBuffer[hashLength - i - 1];
+
+            hashLength += 1;
+
+            if (hashLength < _minHashLength)
+            {
+                var guardIndex = (numberHashInt + result[0]) % (ulong)_guards.Length;
+                var guard = _guards[guardIndex];
+
+                result.Slice(0, hashLength).CopyTo(result.Slice(1));
+                result[0] = guard;
+                hashLength += 1;
+
+                if (hashLength < _minHashLength)
+                {
+                    guardIndex = (numberHashInt + result[2]) % (ulong)_guards.Length;
+                    guard = _guards[guardIndex];
+
+                    result[hashLength] = guard;
+                    hashLength += 1;
+                }
+            }
+
+            var halfLength = _alphabet.Length / 2;
+
+            var stringBuilder = StringBuilderPool.Get();
+#if NETSTANDARD2_0
+            stringBuilder.Append(result.Slice(0, hashLength).ToArray());
+#else
+            stringBuilder.Append(result[..hashLength]);
+#endif
+
+            while (stringBuilder.Length < _minHashLength)
+            {
+                alphabet.CopyTo(shuffleBuffer);
+                ConsistentShuffle(alphabet, shuffleBuffer);
+
+#if NETSTANDARD2_0
+                stringBuilder.Insert(0, alphabet.Slice(halfLength, _alphabet.Length - halfLength).ToArray());
+                stringBuilder.Append(alphabet.Slice(0, halfLength).ToArray());
+#else
+                stringBuilder.Insert(0, alphabet[halfLength.._alphabet.Length]);
+                stringBuilder.Append(alphabet[..halfLength]);
+#endif
+
+                var excess = stringBuilder.Length - _minHashLength;
+                if (excess > 0)
+                {
+                    stringBuilder.Remove(0, excess / 2);
+                    stringBuilder.Remove(_minHashLength, stringBuilder.Length - _minHashLength);
+                }
+            }
+
+            hashLength = stringBuilder.Length;
+
+#if NETSTANDARD2_0
+            for (var i = 0; i < stringBuilder.Length; i++)
+                result[i] = stringBuilder[i];
+#else
+            stringBuilder.CopyTo(0, result, stringBuilder.Length);
+#endif
+
+            StringBuilderPool.Return(stringBuilder);
+
+            return hashLength;
+        }
+
         private int GenerateHashFrom(ReadOnlySpan<long> numbers, ref Span<char> result)
         {
             if (numbers.Length == 0)
@@ -497,6 +594,20 @@ namespace HashidsNet
                 hashBuffer[length] = alphabet[idx];
                 length += 1;
                 input /= _alphabet.Length;
+            } while (input > 0);
+
+            return length;
+        }
+
+        private int BuildReversedHash(ulong input, ReadOnlySpan<char> alphabet, Span<char> hashBuffer)
+        {
+            var length = 0;
+            do
+            {
+                int idx = (int)(input % (ulong)_alphabet.Length);
+                hashBuffer[length] = alphabet[idx];
+                length += 1;
+                input /= (ulong)_alphabet.Length;
             } while (input > 0);
 
             return length;
@@ -688,5 +799,83 @@ namespace HashidsNet
 
             return (count, ranges);
         }
+
+        public uint[] DecodeUnsigned(string hash)
+        {
+            throw new NotImplementedException();
+        }
+
+        public uint DecodeSingleUnsigned(string hash)
+        {
+            throw new NotImplementedException();
+        }
+
+        public bool TryDecodeSingleUnsigned(string hash, out uint id)
+        {
+            throw new NotImplementedException();
+        }
+
+        public ulong[] DecodeUnsignedLong(string hash)
+        {
+            throw new NotImplementedException();
+        }
+
+        public ulong DecodeSingleUnsignedLong(string hash)
+        {
+            throw new NotImplementedException();
+        }
+
+        public bool TryDecodeSingleUnsignedLong(string hash, out ulong id)
+        {
+            throw new NotImplementedException();
+        }
+
+        /// <summary>
+        /// Encodes the provided number into a hashed string
+        /// </summary>
+        /// <param name="number">the number</param>
+        /// <returns>the hashed string</returns>
+        public string EncodeUnsigned(uint number) => EncodeUnsignedLong(number);
+
+        /// <summary>
+        /// Encodes the provided numbers into a hash string.
+        /// </summary>
+        /// <param name="numbers">List of integers.</param>
+        /// <returns>Encoded hash string.</returns>
+        public virtual string EncodeUnsigned(params uint[] numbers) => EncodeUnsignedLong(Array.ConvertAll(numbers, n => (ulong)n));
+
+        /// <summary>
+        /// Encodes the provided numbers into a hash string.
+        /// </summary>
+        /// <param name="numbers">Enumerable list of integers.</param>
+        /// <returns>Encoded hash string.</returns>
+        public virtual string EncodeUnsigned(IEnumerable<uint> numbers) => EncodeUnsigned(numbers.ToArray());
+
+        /// <summary>
+        /// Encodes the provided number into a hashed string
+        /// </summary>
+        /// <param name="number">the number</param>
+        /// <returns>the hashed string</returns>
+        public string EncodeUnsignedLong(ulong number)
+        {
+            var numberLength = _minBufferSize;
+            var result = numberLength < MAX_STACKALLOC_SIZE ? stackalloc char[numberLength] : new char[numberLength];
+            var length = GenerateHashFrom(number, ref result);
+            return length == -1 ? string.Empty : result.Slice(0, length).ToString();
+        }
+
+        /// <summary>
+        /// Encodes the provided numbers into a hash string.
+        /// </summary>
+        /// <param name="numbers">List of 64-bit integers.</param>
+        /// <returns>Encoded hash string.</returns>
+        public string EncodeUnsignedLong(params ulong[] numbers) => EncodeUnsignedLong(Array.ConvertAll(numbers, n => (ulong)n));
+
+        /// <summary>
+        /// Encodes the provided numbers into a hash string.
+        /// </summary>
+        /// <param name="numbers">Enumerable list of 64-bit integers.</param>
+        /// <returns>Encoded hash string.</returns>
+        public string EncodeUnsignedLong(IEnumerable<ulong> numbers) => EncodeUnsignedLong(numbers.ToArray());
     }
 }
