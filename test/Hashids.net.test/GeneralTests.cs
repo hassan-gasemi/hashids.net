@@ -99,6 +99,12 @@ namespace HashidsNet.test
         }
 
         [Fact]
+        public void SingleUnsignedLong_Encodes()
+        {
+            _hashids.EncodeUnsignedLong(ulong.MaxValue).Should().Be("zXVjmzBamYlqX");
+        }
+
+        [Fact]
         public void SingleLong_Decodes()
         {
             _hashids.DecodeLong("NV").Should().Equal(new[] { 1L });
@@ -107,6 +113,12 @@ namespace HashidsNet.test
             _hashids.DecodeLong("KVO9yy1oO5j").Should().Equal(new[] { 666555444333222L });
             _hashids.DecodeLong("4bNP1L26r").Should().Equal(new[] { 12345678901112L });
             _hashids.DecodeLong("jvNx4BjM5KYjv").Should().Equal(new[] { long.MaxValue });
+        }
+
+        [Fact]
+        public void SingleUnsignedLong_Decodes()
+        {
+            _hashids.DecodeUnsignedLong("zXVjmzBamYlqX").Should().Equal(new[] { ulong.MaxValue });
         }
 
         [Fact]

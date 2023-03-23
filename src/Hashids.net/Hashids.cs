@@ -585,6 +585,110 @@ namespace HashidsNet
             return resultLength;
         }
 
+        private int GenerateHashFrom(ReadOnlySpan<ulong> numbers, ref Span<char> result)
+        {
+            if (numbers.Length == 0)
+                return -1;
+
+            foreach (var num in numbers)
+                if (num < 0)
+                    return -1;
+
+            ulong numbersHashInt = 0;
+            for (var i = 0; i < numbers.Length; i++)
+                numbersHashInt += numbers[i] % (ulong)(i + 100);
+
+            var stringBuilder = StringBuilderPool.Get();
+
+            Span<char> alphabet = _alphabet.Length < MAX_STACKALLOC_SIZE ? stackalloc char[_alphabet.Length] : new char[_alphabet.Length];
+            _alphabet.CopyTo(alphabet);
+
+            var lottery = alphabet[(int)(numbersHashInt % (ulong)_alphabet.Length)];
+            stringBuilder.Append(lottery);
+
+            Span<char> shuffleBuffer = _alphabet.Length < MAX_STACKALLOC_SIZE ? stackalloc char[_alphabet.Length] : new char[_alphabet.Length];
+            shuffleBuffer[0] = lottery;
+            _salt.AsSpan().Slice(0, Math.Min(_salt.Length, _alphabet.Length - 1)).CopyTo(shuffleBuffer.Slice(1));
+
+            var startIndex = 1 + _salt.Length;
+            var length = _alphabet.Length - startIndex;
+
+            Span<char> hashBuffer = stackalloc char[_minBufferSize];
+
+            for (var i = 0; i < numbers.Length; i++)
+            {
+                var number = numbers[i];
+
+                if (length > 0)
+                    alphabet.Slice(0, length).CopyTo(shuffleBuffer.Slice(startIndex));
+
+                ConsistentShuffle(alphabet, shuffleBuffer);
+                var hashLength = BuildReversedHash(number, alphabet, hashBuffer);
+
+                for (var j = hashLength - 1; j > -1; j--)
+                    stringBuilder.Append(hashBuffer[j]);
+
+                if (i + 1 < numbers.Length)
+                {
+                    number %= hashBuffer[hashLength - 1] + (ulong)i;
+                    var sepsIndex = number % (ulong)_seps.Length;
+
+                    stringBuilder.Append(_seps[sepsIndex]);
+                }
+            }
+
+            if (stringBuilder.Length < _minHashLength)
+            {
+                var guardIndex = (numbersHashInt + stringBuilder[0]) % (ulong)_guards.Length;
+                var guard = _guards[guardIndex];
+
+                stringBuilder.Insert(0, guard);
+
+                if (stringBuilder.Length < _minHashLength)
+                {
+                    guardIndex = (numbersHashInt + stringBuilder[2]) % (ulong)_guards.Length;
+                    guard = _guards[guardIndex];
+
+                    stringBuilder.Append(guard);
+                }
+            }
+
+            var halfLength = _alphabet.Length / 2;
+
+            while (stringBuilder.Length < _minHashLength)
+            {
+                alphabet.CopyTo(shuffleBuffer);
+                ConsistentShuffle(alphabet, shuffleBuffer);
+
+#if NETSTANDARD2_0
+                stringBuilder.Insert(0, alphabet.Slice(halfLength, _alphabet.Length - halfLength).ToArray());
+                stringBuilder.Append(alphabet.Slice(0, halfLength).ToArray());
+#else
+                stringBuilder.Insert(0, alphabet[halfLength.._alphabet.Length]);
+                stringBuilder.Append(alphabet[..halfLength]);
+#endif
+
+                var excess = stringBuilder.Length - _minHashLength;
+                if (excess > 0)
+                {
+                    stringBuilder.Remove(0, excess / 2);
+                    stringBuilder.Remove(_minHashLength, stringBuilder.Length - _minHashLength);
+                }
+            }
+
+            var resultLength = stringBuilder.Length;
+
+#if NETSTANDARD2_0
+            for (var i = 0; i < stringBuilder.Length; i++)
+                result[i] = stringBuilder[i];
+#else
+            stringBuilder.CopyTo(0, result, stringBuilder.Length);
+#endif
+
+            StringBuilderPool.Return(stringBuilder);
+            return resultLength;
+        }
+
         private int BuildReversedHash(long input, ReadOnlySpan<char> alphabet, Span<char> hashBuffer)
         {
             var length = 0;
@@ -621,6 +725,19 @@ namespace HashidsNet
             {
                 var pos = alphabet.IndexOf(input[i]);
                 number = (number * _alphabet.Length) + pos;
+            }
+
+            return number;
+        }
+
+        private ulong UnhashUnsigned(ReadOnlySpan<char> input, ReadOnlySpan<char> alphabet)
+        {
+            ulong number = 0;
+
+            for (var i = 0; i < input.Length; i++)
+            {
+                var pos = alphabet.IndexOf(input[i]);
+                number = (number * (ulong)_alphabet.Length) + (ulong)pos;
             }
 
             return number;
@@ -674,6 +791,54 @@ namespace HashidsNet
             return -1;
         }
 
+        private ulong? GetUnsignedNumberFrom(string hash)
+        {
+            if (string.IsNullOrWhiteSpace(hash))
+                return null;
+
+            var guardedHash = hash.AsSpan();
+            var (count, ranges) = Split(guardedHash, _guards);
+
+            var unguardedIndex = count is 3 or 2 ? 1 : 0;
+            var (start, offset) = ranges[unguardedIndex];
+            var hashBreakdown = guardedHash.Slice(start, offset);
+
+            ArrayPool<(int, int)>.Shared.Return(ranges);
+
+            var lottery = hashBreakdown[0];
+            if (lottery == '\0')
+                return null;
+
+            var hashBuffer = hashBreakdown.Slice(1);
+
+            Span<char> alphabet = _alphabet.Length < MAX_STACKALLOC_SIZE ? stackalloc char[_alphabet.Length] : new char[_alphabet.Length];
+            _alphabet.CopyTo(alphabet);
+
+            Span<char> buffer = _alphabet.Length < MAX_STACKALLOC_SIZE ? stackalloc char[_alphabet.Length] : new char[_alphabet.Length];
+            buffer[0] = lottery;
+            _salt.AsSpan().Slice(0, Math.Min(_salt.Length, _alphabet.Length - 1)).CopyTo(buffer.Slice(1));
+
+            var startIndex = 1 + _salt.Length;
+            var length = _alphabet.Length - startIndex;
+
+            if (length > 0)
+                alphabet.Slice(0, length).CopyTo(buffer.Slice(startIndex));
+
+            ConsistentShuffle(alphabet, buffer);
+            var result = UnhashUnsigned(hashBuffer, alphabet);
+
+            // regenerate hash from numbers and compare to given hash to ensure the correct parameters were used
+            // ensure buffer is big enough based on what was generated
+            var bufferSize = Math.Max(_minBufferSize, guardedHash.Length);
+            Span<char> resultBuffer = stackalloc char[bufferSize];
+            var hashLength = GenerateHashFrom(result, ref resultBuffer);
+            ReadOnlySpan<char> rehash = resultBuffer.Slice(0, hashLength);
+            if (guardedHash.Equals(rehash, StringComparison.Ordinal))
+                return result;
+
+            return null;
+        }
+
         private long[] GetNumbersFrom(string hash)
         {
             var result = NumbersFrom(hash);
@@ -689,6 +854,23 @@ namespace HashidsNet
                 return result;
 
             return Array.Empty<long>();
+        }
+
+        private ulong[] GetUnsignedNumbersFrom(string hash)
+        {
+            var result = UnsignedNumbersFrom(hash);
+
+            Span<char> hashBuffer = hash.Length < MAX_STACKALLOC_SIZE ? stackalloc char[hash.Length] : new char[hash.Length];
+            var hashLength = GenerateHashFrom(result, ref hashBuffer);
+            if (hashLength == -1)
+                return Array.Empty<ulong>();
+
+            ReadOnlySpan<char> rehash = hashBuffer.Slice(0, hashLength);
+            // regenerate hash from numbers and compare to given hash to ensure the correct parameters were used
+            if (hash.AsSpan().Equals(rehash, StringComparison.Ordinal))
+                return result;
+
+            return Array.Empty<ulong>();
         }
 
         private long[] NumbersFrom(string hash)
@@ -737,6 +919,58 @@ namespace HashidsNet
 
                 ConsistentShuffle(alphabet, buffer);
                 result[j] = Unhash(subHash, alphabet);
+            }
+
+            ArrayPool<(int, int)>.Shared.Return(ranges);
+            return result;
+        }
+
+        private ulong[] UnsignedNumbersFrom(string hash)
+        {
+            if (string.IsNullOrWhiteSpace(hash))
+                return Array.Empty<ulong>();
+
+            var guardedHash = hash.AsSpan();
+            var (count, ranges) = Split(guardedHash, _guards);
+
+            if (count == 0)
+                return Array.Empty<ulong>();
+
+            var unguardedIndex = count is 3 or 2 ? 1 : 0;
+            var (start, offset) = ranges[unguardedIndex];
+            var hashBreakdown = guardedHash.Slice(start, offset);
+
+            ArrayPool<(int, int)>.Shared.Return(ranges);
+
+            var lottery = hashBreakdown[0];
+            if (lottery == '\0') // default(char) is '\0'
+                return Array.Empty<ulong>();
+
+            var hashBuffer = hashBreakdown.Slice(1);
+            (count, ranges) = Split(hashBuffer, _seps);
+
+            var result = new ulong[count];
+
+            Span<char> alphabet = _alphabet.Length < MAX_STACKALLOC_SIZE ? stackalloc char[_alphabet.Length] : new char[_alphabet.Length];
+            _alphabet.CopyTo(alphabet);
+
+            Span<char> buffer = _alphabet.Length < MAX_STACKALLOC_SIZE ? stackalloc char[_alphabet.Length] : new char[_alphabet.Length];
+            buffer[0] = lottery;
+            _salt.AsSpan().Slice(0, Math.Min(_salt.Length, _alphabet.Length - 1)).CopyTo(buffer.Slice(1));
+
+            var startIndex = 1 + _salt.Length;
+            var length = _alphabet.Length - startIndex;
+
+            for (var j = 0; j < count; j++)
+            {
+                (start, offset) = ranges[j];
+                var subHash = hashBuffer.Slice(start, offset);
+
+                if (length > 0)
+                    alphabet.Slice(0, length).CopyTo(buffer.Slice(startIndex));
+
+                ConsistentShuffle(alphabet, buffer);
+                result[j] = UnhashUnsigned(subHash, alphabet);
             }
 
             ArrayPool<(int, int)>.Shared.Return(ranges);
@@ -800,34 +1034,58 @@ namespace HashidsNet
             return (count, ranges);
         }
 
-        public uint[] DecodeUnsigned(string hash)
-        {
-            throw new NotImplementedException();
-        }
+        public uint[] DecodeUnsigned(string hash) => Array.ConvertAll(GetUnsignedNumbersFrom(hash), n => (uint)n);
 
         public uint DecodeSingleUnsigned(string hash)
         {
-            throw new NotImplementedException();
+            var number = GetUnsignedNumberFrom(hash);
+
+            return number switch
+            {
+                null => throw new NoResultException("The hash provided yielded no result."),
+                _ => (uint)number.Value,
+            };
         }
 
         public bool TryDecodeSingleUnsigned(string hash, out uint id)
         {
-            throw new NotImplementedException();
+            var number = GetUnsignedNumberFrom(hash);
+
+            if (number >= 0)
+            {
+                id = (uint)number;
+                return true;
+            }
+
+            id = 0;
+            return false;
         }
 
-        public ulong[] DecodeUnsignedLong(string hash)
-        {
-            throw new NotImplementedException();
-        }
+        public ulong[] DecodeUnsignedLong(string hash) => GetUnsignedNumbersFrom(hash);
 
         public ulong DecodeSingleUnsignedLong(string hash)
         {
-            throw new NotImplementedException();
+            var number = GetUnsignedNumberFrom(hash);
+
+            return number switch
+            {
+                null => throw new NoResultException("The hash provided yielded no result."),
+                _ => number.Value,
+            };
         }
 
         public bool TryDecodeSingleUnsignedLong(string hash, out ulong id)
         {
-            throw new NotImplementedException();
+            var number = GetUnsignedNumberFrom(hash);
+
+            if (number >= 0)
+            {
+                id = number.Value;
+                return true;
+            }
+
+            id = 0L;
+            return false;
         }
 
         /// <summary>
