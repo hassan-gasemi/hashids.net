@@ -39,6 +39,19 @@ namespace HashidsNet.test
         }
 
         [Fact]
+        public void SingleUnsignedInt_Encodes()
+        {
+            _hashids.EncodeUnsigned(1).Should().Be("NV");
+            _hashids.EncodeUnsigned(22).Should().Be("K4");
+            _hashids.EncodeUnsigned(333).Should().Be("OqM");
+            _hashids.EncodeUnsigned(9999).Should().Be("kQVg");
+            _hashids.EncodeUnsigned(123000).Should().Be("58LzD");
+            _hashids.EncodeUnsigned(456000000).Should().Be("5gn6mQP");
+            _hashids.EncodeUnsigned(987654321).Should().Be("oyjYvry");
+            _hashids.EncodeUnsigned(uint.MaxValue).Should().Be("j4r6j8Y");
+        }
+
+        [Fact]
         public void SingleInt_Decodes()
         {
             _hashids.Decode("NkK9").Should().Equal(new[] { 12345 });
@@ -46,6 +59,16 @@ namespace HashidsNet.test
             _hashids.Decode("Wzo").Should().Equal(new[] { 1337 });
             _hashids.Decode("DbE").Should().Equal(new[] { 808 });
             _hashids.Decode("yj8").Should().Equal(new[] { 303 });
+        }
+
+        [Fact]
+        public void SingleUnsignedInt_Decodes()
+        {
+            _hashids.DecodeUnsigned("NkK9").Should().Equal(new[] { 12345u });
+            _hashids.DecodeUnsigned("5O8yp5P").Should().Equal(new[] { 666555444u });
+            _hashids.DecodeUnsigned("Wzo").Should().Equal(new[] { 1337u });
+            _hashids.DecodeUnsigned("DbE").Should().Equal(new[] { 808u });
+            _hashids.DecodeUnsigned("j4r6j8Y").Should().Equal(new[] { uint.MaxValue });
         }
 
         [Fact]
@@ -59,6 +82,19 @@ namespace HashidsNet.test
 
             Assert.Throws<NoResultException>(() => _hashids.DecodeSingle(string.Empty));
             Assert.Throws<NoResultException>(() => _hashids.DecodeSingle("aBMswoO2UB3Sj"));
+        }
+
+        [Fact]
+        public void SingleUnsignedInt_DecodesSingleNumber()
+        {
+            _hashids.DecodeSingleUnsigned("NkK9").Should().Be(12345);
+            _hashids.DecodeSingleUnsigned("5O8yp5P").Should().Be(666555444);
+            _hashids.DecodeSingleUnsigned("Wzo").Should().Be(1337);
+            _hashids.DecodeSingleUnsigned("DbE").Should().Be(808);
+            _hashids.DecodeSingleUnsigned("yj8").Should().Be(303);
+
+            Assert.Throws<NoResultException>(() => _hashids.DecodeSingleUnsigned(string.Empty));
+            Assert.Throws<NoResultException>(() => _hashids.DecodeSingleUnsigned("aBMswoO2UB3Sj"));
         }
 
         [Fact]
@@ -101,6 +137,11 @@ namespace HashidsNet.test
         [Fact]
         public void SingleUnsignedLong_Encodes()
         {
+            _hashids.EncodeUnsignedLong(1UL).Should().Be("NV");
+            _hashids.EncodeUnsignedLong(2147483648UL).Should().Be("21OjjRK");
+            _hashids.EncodeUnsignedLong(4294967296UL).Should().Be("D54yen6");
+            _hashids.EncodeUnsignedLong(666555444333222UL).Should().Be("KVO9yy1oO5j");
+            _hashids.EncodeUnsignedLong(12345678901112UL).Should().Be("4bNP1L26r");
             _hashids.EncodeUnsignedLong(ulong.MaxValue).Should().Be("zXVjmzBamYlqX");
         }
 
@@ -118,6 +159,11 @@ namespace HashidsNet.test
         [Fact]
         public void SingleUnsignedLong_Decodes()
         {
+            _hashids.DecodeUnsignedLong("NV").Should().Equal(new[] { 1UL });
+            _hashids.DecodeUnsignedLong("21OjjRK").Should().Equal(new[] { 2147483648UL });
+            _hashids.DecodeUnsignedLong("D54yen6").Should().Equal(new[] { 4294967296UL });
+            _hashids.DecodeUnsignedLong("KVO9yy1oO5j").Should().Equal(new[] { 666555444333222UL });
+            _hashids.DecodeUnsignedLong("4bNP1L26r").Should().Equal(new[] { 12345678901112UL });
             _hashids.DecodeUnsignedLong("zXVjmzBamYlqX").Should().Equal(new[] { ulong.MaxValue });
         }
 
@@ -133,6 +179,20 @@ namespace HashidsNet.test
 
             Assert.Throws<NoResultException>(() => _hashids.DecodeSingleLong(string.Empty));
             Assert.Throws<NoResultException>(() => _hashids.DecodeSingleLong("6gH3kPY7MJ9zjM3"));
+        }
+
+        [Fact]
+        public void SingleUnsignedLong_DecodesSingleNumber()
+        {
+            _hashids.DecodeSingleUnsignedLong("NV").Should().Be(1UL);
+            _hashids.DecodeSingleUnsignedLong("21OjjRK").Should().Be(2147483648UL);
+            _hashids.DecodeSingleUnsignedLong("D54yen6").Should().Be(4294967296UL);
+            _hashids.DecodeSingleUnsignedLong("KVO9yy1oO5j").Should().Be(666555444333222UL);
+            _hashids.DecodeSingleUnsignedLong("4bNP1L26r").Should().Be(12345678901112UL);
+            _hashids.DecodeSingleUnsignedLong("zXVjmzBamYlqX").Should().Be(ulong.MaxValue);
+
+            Assert.Throws<NoResultException>(() => _hashids.DecodeSingleUnsignedLong(string.Empty));
+            Assert.Throws<NoResultException>(() => _hashids.DecodeSingleUnsignedLong("6gH3kPY7MJ9zjM3"));
         }
 
         [Fact]
