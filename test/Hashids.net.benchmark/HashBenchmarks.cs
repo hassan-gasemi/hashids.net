@@ -16,6 +16,8 @@ namespace Hashids.net.benchmark
         private readonly HashidsNet.Hashids _hashids;
         private readonly int[] _ints = { 12345, 1234567890, int.MaxValue };
         private readonly long[] _longs = { 12345, 1234567890123456789, long.MaxValue };
+        private readonly uint[] _uints = { 12345u, 1234567890u, uint.MaxValue };
+        private readonly ulong[] _ulongs = { 12345ul, 1234567890123456789ul, ulong.MaxValue };
         private readonly string _hex = "507f1f77bcf86cd799439011";
         private const string fiveEncoded = "nR";
 
@@ -36,6 +38,20 @@ namespace Hashids.net.benchmark
         {
             var encodedValue = _hashids.EncodeLong(_longs);
             var decodedValue = _hashids.DecodeLong(encodedValue);
+        }
+
+        [Benchmark]
+        public void RoundtripUInts()
+        {
+            var encodedValue = _hashids.EncodeUnsigned(_uints);
+            var decodedValue = _hashids.DecodeUnsigned(encodedValue);
+        }
+
+        [Benchmark]
+        public void RoundtripULongs()
+        {
+            var encodedValue = _hashids.EncodeUnsignedLong(_ulongs);
+            var decodedValue = _hashids.DecodeUnsignedLong(encodedValue);
         }
 
         [Benchmark]
